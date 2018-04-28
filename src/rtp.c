@@ -10,6 +10,7 @@
 
 #include <pthread.h>
 
+#include <pjmedia-codec.h>
 
 /* This is a PJSIP module to be registered by application to handle
  * incoming requests outside any dialogs/transactions. The main purpose
@@ -35,45 +36,49 @@ pjsip_module mod_siprtp = {
 
 void on_rx_rtp(void *user_data, void *pkt, pj_ssize_t size)
 {
-        media_stream_t *strm;
-        pj_status_t status;
-        const pjmedia_rtp_hdr *hdr;
-        const void *payload;
-        unsigned payload_len;
+    media_stream_t *strm;
+    pj_status_t status;
+    const pjmedia_rtp_hdr *hdr;
+    const void *payload;
+    unsigned payload_len;
 
-        strm = user_data;
+    strm = user_data;
 
-        /* Discard packet if media is inactive */
-        if (!strm->active)
-                return;
+    /* Discard packet if media is inactive */
+    if (!strm->active)
+        return;
 
-        /* Check for errors */
-        if (size < 0) {
-                app_perror(THIS_FILE, "RTP recv() error", (pj_status_t)-size);
-                return;
-        }
+    /* Check for errors */
+    if (size < 0) {
+        app_perror(THIS_FILE, "RTP recv() error", (pj_status_t)-size);
+        return;
+    }
 
-        /* Decode RTP packet. */
-        status = pjmedia_rtp_decode_rtp(&strm->in_sess,
-                                        pkt, (int)size,
-                                        &hdr, &payload, &payload_len);
-        if (status != PJ_SUCCESS) {
-                app_perror(THIS_FILE, "RTP decode error", status);
-                return;
-        }
+    /* Decode RTP packet. */
+    status = pjmedia_rtp_decode_rtp(&strm->in_sess,
+                                    pkt, (int)size,
+                                    &hdr, &payload, &payload_len);
 
-        PJ_LOG(4,(THIS_FILE, "Rx seq=%d", pj_ntohs(hdr->seq)));
+    if (status != PJ_SUCCESS) {
+        app_perror(THIS_FILE, "RTP decode error", status);
+        return;
+    }
 
+    PJ_LOG(4,(THIS_FILE, "Rx seq=%d", pj_ntohs(hdr->seq)));
 
-        fwrite(payload,payload_len,1,strm->recv_fd);
+    u_int16_t buf[payload_len];
+    for(int i=0; i<payload_len; i++) {
+        buf[i] = pjmedia_alaw2linear( ((u_char *)payload)[i] );
+    }
 
+    fwrite(buf,payload_len*2,1,strm->recv_fd);
 
-        /* Update the RTCP session. */
-        pjmedia_rtcp_rx_rtp(&strm->rtcp, pj_ntohs(hdr->seq),
-                            pj_ntohl(hdr->ts), payload_len);
+    /* Update the RTCP session. */
+    pjmedia_rtcp_rx_rtp(&strm->rtcp, pj_ntohs(hdr->seq),
+                        pj_ntohl(hdr->ts), payload_len);
 
-        /* Update RTP session */
-        pjmedia_rtp_session_update(&strm->in_sess, hdr, NULL);
+    /* Update RTP session */
+    pjmedia_rtp_session_update(&strm->in_sess, hdr, NULL);
 
 }
 
@@ -412,6 +417,9 @@ static int media_thread(void *arg)
 
                 /* Zero the payload */
                 pj_bzero(packet+hdrlen, strm->bytes_per_frame);
+                for(int i=hdrlen; i<strm->bytes_per_frame; i++) {
+                    packet[i] = pj_rand();
+                }
 
                 /* Send RTP packet */
                 size = hdrlen + strm->bytes_per_frame;
