@@ -1,5 +1,5 @@
 # pjsipDemo
-利用pjsip实现拨打电话并抓取热土平
+利用pjsip实现拨打电话
 
 
 ## 运行环境
